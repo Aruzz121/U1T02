@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "Vpak1NLwbao=",
+  "success": true,
+  "projectFilePath": "D:\\ESCUELA\\Proyectos_Luis_Aguirre\\Proyecto_3.1\\Problema_3.1_CSharp\\Convolucion.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\luisa\\.nuget\\packages\\microsoft.win32.systemevents\\10.0.12\\microsoft.win32.systemevents.10.0.12.nupkg.sha512",
+    "C:\\Users\\luisa\\.nuget\\packages\\system.drawing.common\\10.0.12\\system.drawing.common.10.0.12.nupkg.sha512"
+  ],
+  "logs": []
+}

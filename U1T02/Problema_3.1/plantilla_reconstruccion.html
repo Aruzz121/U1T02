@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reconstrucción por convolución</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f3f6f8;--ink:#1c2733;--mut:#5b6b7a;--card:#fff;--line:#d3dde5;--acc:#0f766e;--accfg:#fff;--win:#c2410c;--pad:#e9b44c}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10171d;--ink:#e6edf3;--mut:#9fb0bf;--card:#18222b;--line:#2d3b48;--acc:#2dd4bf;--accfg:#06201c;--win:#fb923c;--pad:#d99a1e}}
+:root[data-theme="dark"]{--bg:#10171d;--ink:#e6edf3;--mut:#9fb0bf;--card:#18222b;--line:#2d3b48;--acc:#2dd4bf;--accfg:#06201c;--win:#fb923c;--pad:#d99a1e}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "IBM Plex Sans",system-ui,sans-serif}
+main{max-width:1600px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:1.8rem;margin:0 0 4px;letter-spacing:-.02em}
+.lead{color:var(--mut);margin:0 0 18px;max-width:68ch}
+.ctrl{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:16px}
+label{display:flex;flex-direction:column;font-size:.85rem;color:var(--mut);gap:4px}
+label.chk{flex-direction:row;align-items:center;gap:6px;color:var(--ink)}
+select{font:inherit;padding:6px 8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+button{font:inherit;padding:8px 16px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+button.go{background:var(--acc);color:var(--accfg);border-color:var(--acc);font-weight:600}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--win);outline-offset:2px}
+.views{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
+.box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;max-width:100%;min-width:0}
+.box h2{font-size:1rem;margin:0 0 8px}
+.wrap{max-width:100%}
+canvas{display:block;image-rendering:pixelated;background:#000}
+.side{flex:1 1 360px;min-width:0;display:flex;flex-direction:column;gap:16px}#calc{overflow-x:auto;min-height:6em}#calc .f{font:13px/1.7 ui-monospace,Consolas,monospace;margin:4px 0}
+.tb{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;margin-top:8px}
+.tb small{display:block;color:var(--mut);margin-bottom:4px}
+table{border-collapse:collapse;font:12px ui-monospace,Consolas,monospace}
+td{border:1px solid var(--line);padding:2px 5px;text-align:right}
+td.pd{background:rgba(233,180,76,.35)}
+.note{color:var(--mut);font-size:.88rem;max-width:70ch}
+</style></head><body><main>
+<h1>Reconstruyendo la imagen pixel por pixel</h1>
+<p class="lead">Paso 1: la imagen a color se convierte a gris, píxel por píxel. Paso 2: se recorre fila por fila con el kernel (cuadro naranja) y a la derecha se arma el resultado. La franja rayada es el padding: los píxeles que se inventan cuando el kernel se sale de la imagen.</p>
+<div class="ctrl">
+<label>Filtro<select id="kern"><option value="blur">Desenfoque 3×3</option><option value="sharp">Nitidez 3×3</option><option value="edge" selected>Bordes (silueta) 3×3</option></select></label>
+<label>Padding<select id="mode"><option value="zero">ZeroPadding</option><option value="rep">ReplicatePadding</option><option value="ref">ReflectPadding</option></select></label>
+<label>Velocidad: <output id="spv">20</output> píxeles/seg<input type="range" id="spd" min="1" max="600" value="20"></label>
+<label class="chk"><input type="checkbox" id="num">Mostrar números</label>
+<label>Imagen<input type="file" id="fil" accept="image/*"></label>
+<button class="go" id="bgo">▶ Run</button><button id="bre">Reiniciar</button>
+</div>
+<div class="views">
+<div class="box"><h2>Gris + kernel</h2><div class="wrap" id="wA"><canvas id="cA"></canvas></div></div>
+<div class="box"><h2>Resultado</h2><div class="wrap" id="wR"><canvas id="cR"></canvas></div></div>
+<div class="side">
+<div class="box"><h2>Original (color)</h2><div class="wrap" id="wO"><canvas id="cO"></canvas></div></div>
+<div class="box"><h2>Cálculo</h2><div id="calc" role="status"></div></div>
+</div>
+</div>
+<p class="note">La conversión a gris es la del programa en C#: 0.299·R + 0.587·G + 0.114·B (el ojo ve más el verde). Las franjas de números en el padding muestran los valores que se inventan. Los números sobre la imagen salen con letra pequeña (acerca con Ctrl + rueda del ratón) y sólo en imágenes de hasta 48 px; en imágenes grandes usa las tablas del cálculo. El fondo transparente se lee como negro, igual que en el C#. El blur de esta página es de 3×3 para que se vea bien en una imagen chica.</p>
+</main>
+<script>
+const SRC="@@SRC@@";
+const PM=3,$=id=>document.getElementById(id);
+const KER={blur:Array.from({length:3},()=>Array(3).fill(1/9)),sharp:[[0,-1,0],[-1,5,-1],[0,-1,0]],edge:[[-1,-1,-1],[-1,8,-1],[-1,-1,-1]]};
+let S=8,A,M,N,R,H,K,r,mode,orig,cur,ph=0,k=0,raf=0,last=0,acc=0,running=false,numOn=false,wi=-1,wj=-1;
+const cO=$("cO"),cA=$("cA"),cR=$("cR"),xO=cO.getContext("2d"),xA=cA.getContext("2d"),xR=cR.getContext("2d");
+const tmp=document.createElement("canvas"),off=document.createElement("canvas");
+const cl=(i,n)=>i<0?0:i>=n?n-1:i, rf=(i,n)=>i<0?-i:i>=n?2*(n-1)-i:i;
+const inside=(f,c)=>f>=0&&f<M&&c>=0&&c<N;
+function px(f,c){if(inside(f,c))return A[f*N+c];if(mode==="zero")return 0;if(mode==="rep")return A[cl(f,M)*N+cl(c,N)];return A[rf(f,M)*N+rf(c,N)];}
+function conv(i,j){let s=0;for(let a=0;a<K;a++)for(let b=0;b<K;b++)s+=px(i+a-r,j+b-r)*H[K-1-a][K-1-b];return s;}
+const fm=x=>{x=+x.toFixed(2);return String(x)};
+function layout(){ // mismo tamaño en pantalla con o sin numeros
+ S=N<=48?26:Math.max(1,Math.floor(400/(N+2*PM)));
+ cO.width=cR.width=N*S;cO.height=cR.height=M*S;cA.width=(N+2*PM)*S;cA.height=(M+2*PM)*S;
+ const f=N/(N+2*PM),w="min(31vw,530px)";  // tamano fijo, con o sin numeros
+ cA.style.width=w;cR.style.width="calc("+w+" * "+f.toFixed(4)+")";cO.style.width=Math.round(170*f)+"px";
+}
+function put(ctx,buf,dx,dy){tmp.width=N;tmp.height=M;tmp.getContext("2d").putImageData(new ImageData(buf,N,M),0,0);ctx.imageSmoothingEnabled=false;ctx.drawImage(tmp,dx,dy,N*S,M*S);}
+function num(ctx,v,x,y,col){ctx.font=Math.floor(S*.5)+"px ui-monospace,Consolas,monospace";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillStyle=col||(v>140?"#111":"#eee");ctx.fillText(Math.round(v),x+S/2,y+S/2);}
+function render(){
+ const cs=getComputedStyle(document.documentElement),pad=cs.getPropertyValue("--pad").trim(),win=cs.getPropertyValue("--win").trim();
+ xO.fillStyle="#000";xO.fillRect(0,0,cO.width,cO.height);put(xO,orig,0,0);
+ xA.fillStyle="#000";xA.fillRect(0,0,cA.width,cA.height);put(xA,cur,PM*S,PM*S);
+ xA.strokeStyle=pad;xA.lineWidth=Math.max(1,PM*S-2);xA.setLineDash([6,6]);xA.strokeRect(PM*S/2,PM*S/2,(N+PM)*S,(M+PM)*S);xA.setLineDash([]);
+ xR.fillStyle="#1a242d";xR.fillRect(0,0,cR.width,cR.height);put(xR,R,0,0);
+ const nums=numOn&&N<=48;
+ if(nums){
+  for(let f=-PM;f<M+PM;f++)for(let c=-PM;c<N+PM;c++){
+   if(inside(f,c)){const p=f*N+c;if(ph>=1||p<k&&ph===0)num(xA,cur[p*4],(c+PM)*S,(f+PM)*S);}
+   else if(ph>=1)num(xA,px(f,c),(c+PM)*S,(f+PM)*S,pad);}
+  for(let p=0;p<N*M;p++)if(ph===2||(ph===1&&p<k))num(xR,R[p*4],(p%N)*S,Math.floor(p/N)*S);
+ }
+ if(ph===1&&wi>=0){xA.strokeStyle=win;xA.lineWidth=Math.max(2,S/4);xA.strokeRect((wj-r+PM)*S,(wi-r+PM)*S,K*S,K*S);xA.fillStyle="rgba(251,146,60,.45)";xA.fillRect((wj+PM)*S,(wi+PM)*S,S,S);
+  xR.strokeStyle=win;xR.lineWidth=Math.max(2,S/4);xR.strokeRect(wj*S,wi*S,S,S);
+  }
+}
+function tbl(fn,pd){let s="<table>";for(let a=0;a<K;a++){s+="<tr>";for(let b=0;b<K;b++)s+=`<td${pd&&pd(a,b)?' class="pd"':""}>${fn(a,b)}</td>`;s+="</tr>";}return s+"</table>";}
+function info(lp,i,j){
+ if(lp===0){const p=(i*N+j)*4,R_=orig[p],G=orig[p+1],B=orig[p+2],g=Math.round(A[i*N+j]);
+  $("calc").innerHTML=`<b>Paso 1 · color → gris</b> &nbsp; píxel (fila ${i}, columna ${j})<div class="f">R=${R_} &nbsp;G=${G} &nbsp;B=${B}</div><div class="f">gris = 0.299×${R_} + 0.587×${G} + 0.114×${B} = ${fm(.299*R_)} + ${fm(.587*G)} + ${fm(.114*B)} = <b>${g}</b></div>`;return;}
+ const pd=(a,b)=>!inside(i+a-r,j+b-r),w=(a,b)=>H[K-1-a][K-1-b];let sum=0;
+ for(let a=0;a<K;a++)for(let b=0;b<K;b++)sum+=px(i+a-r,j+b-r)*w(a,b);
+ const v=Math.max(0,Math.min(255,Math.round(sum)));
+ $("calc").innerHTML=`<b>Paso 2 · convolución</b> &nbsp; píxel (fila ${i}, columna ${j}) &nbsp; <small>las celdas amarillas son padding (${$("mode").selectedOptions[0].text})</small><div class="tb"><div><small>ventana de A</small>${tbl((a,b)=>Math.round(px(i+a-r,j+b-r)),pd)}</div><div><small>× kernel H</small>${tbl((a,b)=>fm(w(a,b)))}</div><div><small>= productos</small>${tbl((a,b)=>fm(px(i+a-r,j+b-r)*w(a,b)),pd)}</div></div><div class="f">suma = ${fm(sum)} → se limita a 0..255 → <b>${v}</b></div>`;
+}
+function reset(){
+ cancelAnimationFrame(raf);running=false;mode=$("mode").value;H=KER[$("kern").value];K=H.length;r=K>>1;
+ R=new Uint8ClampedArray(N*M*4);cur=orig.slice();ph=0;k=0;acc=0;wi=wj=-1;
+ render();$("bgo").textContent="▶ Run";$("calc").innerHTML="Pulsa <b>Run</b>: primero la imagen pasa a gris y después se aplica el filtro.";
+}
+function tick(t){
+ const dt=Math.min(100,t-last)/1000;last=t;acc+=dt*(+$("spd").value)*(ph===0?5:1);let n=Math.floor(acc);acc-=n;
+ let li=-1,lj=-1,lp=ph;
+ while(n-->0&&ph<2){const i=Math.floor(k/N),j=k%N,p=k*4;lp=ph;
+  if(ph===0){const g=Math.round(A[k]);cur[p]=cur[p+1]=cur[p+2]=g;}
+  else{const v=Math.max(0,Math.min(255,Math.round(conv(i,j))));R[p]=R[p+1]=R[p+2]=v;R[p+3]=255;}
+  li=i;lj=j;if(++k>=N*M){k=0;ph++;}}
+ if(li>=0){wi=lp===1?li:-1;wj=lj;render();info(lp,li,lj);}
+ if(ph>=2){running=false;$("bgo").textContent="▶ Run";$("calc").insertAdjacentHTML("afterbegin","<b>Listo.</b> "+(M*N)+" píxeles convertidos y calculados.<br>");wi=-1;render();}
+}
+function loop(t){tick(t);if(running&&ph<2)raf=requestAnimationFrame(loop);}
+$("bgo").onclick=()=>{if(running){running=false;cancelAnimationFrame(raf);$("bgo").textContent="▶ Seguir";return;}
+ if(ph>=2)reset();running=true;last=performance.now();$("bgo").textContent="⏸ Pausa";raf=requestAnimationFrame(loop);};
+$("bre").onclick=reset;$("kern").onchange=$("mode").onchange=reset;
+$("spd").oninput=()=>{$("spv").textContent=$("spd").value};
+$("num").onchange=()=>{numOn=$("num").checked;layout();render();};
+const im=new Image();
+im.onload=()=>{ // igual que el C#: si es mas ancha que 300 px se reduce
+ N=Math.min(im.width,300);M=Math.round(im.height*N/im.width);off.width=N;off.height=M;
+ const x=off.getContext("2d");x.clearRect(0,0,N,M);x.drawImage(im,0,0,N,M);const d=x.getImageData(0,0,N,M).data;
+ A=new Float64Array(N*M);orig=new Uint8ClampedArray(N*M*4);
+ for(let q=0;q<N*M;q++){const a=d[q*4],b=d[q*4+1],c=d[q*4+2];orig[q*4]=a;orig[q*4+1]=b;orig[q*4+2]=c;orig[q*4+3]=255;A[q]=0.299*a+0.587*b+0.114*c;}
+ layout();reset();};
+im.onerror=()=>{$("calc").textContent="Elige una imagen con el selector de arriba.";};
+$("fil").onchange=e=>{const f=e.target.files[0];if(!f)return;const fr=new FileReader();fr.onload=()=>{im.src=fr.result};fr.readAsDataURL(f);};
+if(SRC.startsWith("data:"))im.src=SRC;else im.onerror();
+</script></body></html>
